@@ -14,18 +14,33 @@ const int IN3 = 10;
 const int IN4 = 12;
 
 // Encoder 
-const int Encoder0_PinA = 2;
+const int Encoder0_PinA = 0;
 const int Encoder0_PinB = 3;
-const int Encoder1_PinA = 4;
-const int Encoder1_PinB = 5;
+const int Encoder1_PinA = 1;
+const int Encoder1_PinB = 2;
+const int LEFT = 0;
+const int RIGHT = 1;
 int LeftSpeed = 0;
 int RightSpeed= 0;
+int LastLS = 0;
+int LastRS = 0;
 
-boolean Encoder0_ALast = LOW;
-boolean Encoder1_ALast = LOW;
+// speed
+int Speed;
+int SpeedDot;
+
+const int MDS = 50;
+int TempSpeed;
+
+
+// delay time
+const int t = 100;
 
 // PID Parameters
-double K1, K2, K3, K4;
+const double K1 = 50.0;
+const double K2 = 5;
+const double K3 = 0; 
+const double K4 = 0.01;
 
 MPU6050 AccelGyro;             // 陀螺仪
 double AngleAx, GyroGx;        // 加速度计算的角度（与x轴夹角）和x轴角速度
@@ -33,7 +48,7 @@ int16_t AX, AY, AZ, GX, GY, GZ; // 3个加速度和3个角速度
 
 // kalman para
 double Angle, AngleDot;    // 卡尔曼滤波后的角度和角速度
-double dt = 0.02;          // 卡尔曼滤波采样时间
+const double dt = 0.02;          // 卡尔曼滤波采样时间
 double P[2][2] = {{1, 0}, {0, 1}};
 double Pdot[4] = {0, 0, 0, 0};
 double Q_angle = 0.001, Q_gyro = 0.005;  // 角度(AngleAx)置信度，角速度(GyroGx)置信度
@@ -44,9 +59,6 @@ void setup() {
   Wire.begin();
   Serial.begin(9600);
   AccelGyro.initialize();
-  
-  K1 = 12;
-  K2 = 0.5;
   
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
@@ -61,47 +73,57 @@ void setup() {
   digitalWrite(Encoder0_PinB, HIGH);
   digitalWrite(Encoder1_PinA, HIGH);
   digitalWrite(Encoder1_PinB, HIGH);
+  
+  attachInterrupt(LEFT, LeftWheelSpeed, FALLING);
+  attachInterrupt(RIGHT, RightWheelSpeed, FALLING);
+  
 }
 
 void loop() {
-  LeftWheelSpeed();
+  //Serial.println(micros()/1000);
   CalAngle();
+  CalSpeed();
   CalPwm();
   OutPwm();
   
   printout();
   
-  delay(5);
+  delay(t);
 }
 
-void printout()
-{
-  Serial.print(AngleAx);
-  Serial.print("    ");
+void printout() {
   Serial.print(Angle);
   Serial.print("    ");
   Serial.print(AngleDot);
   Serial.print("    ");
   Serial.print(Pwm);
   Serial.print("    ");
-  Serial.println(LeftSpeed);
+  Serial.print(Speed);
+  Serial.print("    ");
+  Serial.println(SpeedDot);
 }
 
-void LeftWheelSpeed() {
-   boolean Encoder0_A = digitalRead(Encoder0_PinA);
-   if ((Encoder0_ALast == HIGH) && (Encoder0_A == LOW)) {
-      if (digitalRead(Encoder0_PinB) == LOW)
-        LeftSpeed--;
-      else
-        LeftSpeed++;
-   }
-   
-   Encoder0_ALast = Encoder0_A; 
+void CalAngle() {
+  AccelGyro.getMotion6(&AX, &AY, &AZ, &GX, &GY, &GZ);
+  AngleAx = atan2(AY, AZ)*180/PI;
+  GyroGx = GX/131.00;
+  KalmanFilter(AngleAx, GyroGx);
+}
+
+void CalSpeed() {
+  Speed = (LeftSpeed - LastLS + RightSpeed - LastRS) * 0.5;
+  SpeedDot = Speed *100;
+  LastLS = LeftSpeed;
+  LastRS = RightSpeed;
 }
 
 void CalPwm() {
+  if (Angle > 0)
+    TempSpeed = MDS;
+  else
+    TempSpeed = -MDS;
   
-  Pwm = K1 * Angle + K2 *AngleDot;
+  Pwm = K1 * (Angle+0) + K2 * AngleDot + K3 * Speed + K4 * SpeedDot + TempSpeed;
   
   if (Pwm > 255)
     Pwm = 255;
@@ -128,13 +150,6 @@ void OutPwm() {
 
   analogWrite(ENB, PwmRight);
   analogWrite(ENA, PwmLeft);
-}
-
-void CalAngle() {
-  AccelGyro.getMotion6(&AX, &AY, &AZ, &GX, &GY, &GZ);
-  AngleAx = atan2(AY, AZ)*180/PI;
-  GyroGx = GX/131.00;
-  KalmanFilter(AngleAx, GyroGx);
 }
 
 void KalmanFilter(double angle_m, double gyro_m)
@@ -165,4 +180,17 @@ void KalmanFilter(double angle_m, double gyro_m)
   AngleDot = gyro_m - q_bias;   // 最优角速度
 }
 
+void LeftWheelSpeed() {
+  if(digitalRead(Encoder0_PinB))
+    LeftSpeed++;
+  else
+    LeftSpeed--;
+}
+
+void RightWheelSpeed() {
+  if(digitalRead(Encoder1_PinB))
+    RightSpeed--;
+  else
+    RightSpeed++;
+}
 
