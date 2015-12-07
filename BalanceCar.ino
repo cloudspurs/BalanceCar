@@ -2,6 +2,9 @@
 #include "I2Cdev.h"
 #include "MPU6050.h"
 
+/********************************************
+  mengqinggang
+********************************************/
 int Pwm;
 int PwmLeft, PwmRight;
 
@@ -20,31 +23,32 @@ const int Encoder1_PinA = 1;
 const int Encoder1_PinB = 2;
 const int LEFT = 0;
 const int RIGHT = 1;
-int LeftSpeed = 0;
-int RightSpeed= 0;
-int LastLS = 0;
-int LastRS = 0;
+double LeftSpeed = 0;
+double RightSpeed= 0;
+double Speed;
+double SpeedLast;
+double Distance;
+const int SpeedControl = 50;
+const int MaxDistance = 5000;
 
-// speed
-int Speed;
-int SpeedDot;
-
-const int MDS = 50;
+// dead speed
+const int MDS = 0;
 int TempSpeed;
 
-
 // delay time
-const int t = 100;
+const int t = 12;
 
 // PID Parameters
-const double K1 = 50.0;
-const double K2 = 5;
-const double K3 = 0; 
-const double K4 = 0.01;
+const double K1 = 60; // 60 
+const double K2 = 1.8;    // 3
+const double K3 = 15; 
+const double K4 = 0.015;
 
 MPU6050 AccelGyro;             // 陀螺仪
-double AngleAx, GyroGx;        // 加速度计算的角度（与x轴夹角）和x轴角速度
+double AngleAy, GyroGy;        // 加速度计算的角度（与x轴夹角）和x轴角速度
 int16_t AX, AY, AZ, GX, GY, GZ; // 3个加速度和3个角速度
+
+const double AngleBalance = -1.3;
 
 // kalman para
 double Angle, AngleDot;    // 卡尔曼滤波后的角度和角速度
@@ -54,6 +58,29 @@ double Pdot[4] = {0, 0, 0, 0};
 double Q_angle = 0.001, Q_gyro = 0.005;  // 角度(AngleAx)置信度，角速度(GyroGx)置信度
 double R_angle = 0.5, C_0 = 1;
 double q_bias, angle_err, PCt_0, PCt_1, E, K_0, K_1, t_0, t_1;
+/********************************************************
+  mengqinggang
+********************************************************/
+
+
+/*******************************************************
+  linlei
+********************************************************/
+
+/*******************************************************
+  linlei
+********************************************************/
+
+
+/*******************************************************
+  suwenyuan
+********************************************************/
+
+/*******************************************************
+  suwenyuan
+********************************************************/
+
+
 
 void setup() {
   Wire.begin();
@@ -77,44 +104,86 @@ void setup() {
   attachInterrupt(LEFT, LeftWheelSpeed, FALLING);
   attachInterrupt(RIGHT, RightWheelSpeed, FALLING);
   
+/*******************************************************
+  linlei
+********************************************************/
+
+/*******************************************************
+  linlei
+********************************************************/
+
+
+/*******************************************************
+  suwenyuan
+********************************************************/
+
+/*******************************************************
+  suwenyuan
+********************************************************/
+
+  
 }
 
 void loop() {
   //Serial.println(micros()/1000);
+  Protect();
   CalAngle();
   CalSpeed();
   CalPwm();
   OutPwm();
   
   printout();
+
+/*******************************************************
+  linlei
+********************************************************/
+
+/*******************************************************
+  linlei
+********************************************************/
+  
+  
+/*******************************************************
+  suwenyuan
+********************************************************/
+
+/*******************************************************
+  suwenyuan
+********************************************************/
   
   delay(t);
 }
 
-void printout() {
-  Serial.print(Angle);
-  Serial.print("    ");
-  Serial.print(AngleDot);
-  Serial.print("    ");
-  Serial.print(Pwm);
-  Serial.print("    ");
-  Serial.print(Speed);
-  Serial.print("    ");
-  Serial.println(SpeedDot);
+void Drive() {
+  char drive;
+  if (drive == 'w') 
+    Distance += SpeedControl;
+  if (drive == 's')
+    Distance -= SpeedControl;
+  if (Distance > MaxDistance)
+    Distance = MaxDistance;
+  if (Distance < -MaxDistance)
+    Distance = -MaxDistance;
 }
 
 void CalAngle() {
   AccelGyro.getMotion6(&AX, &AY, &AZ, &GX, &GY, &GZ);
-  AngleAx = atan2(AY, AZ)*180/PI;
-  GyroGx = GX/131.00;
-  KalmanFilter(AngleAx, GyroGx);
+  AngleAy = atan2(AX, AZ)*180/PI;
+  GyroGy = -GY/131.00;
+  KalmanFilter(AngleAy, GyroGy);
 }
 
 void CalSpeed() {
-  Speed = (LeftSpeed - LastLS + RightSpeed - LastRS) * 0.5;
-  SpeedDot = Speed *100;
-  LastLS = LeftSpeed;
-  LastRS = RightSpeed;
+  SpeedLast = (LeftSpeed + RightSpeed) - 0;
+  Speed *= 0.7;
+  Speed += SpeedLast * 0.3;
+  Distance += Speed;
+  LeftSpeed = RightSpeed = 0;
+}
+
+void Protect() {
+  if (abs(Angle) >  10 )
+  Pwm = 0;
 }
 
 void CalPwm() {
@@ -123,7 +192,7 @@ void CalPwm() {
   else
     TempSpeed = -MDS;
   
-  Pwm = K1 * (Angle+0) + K2 * AngleDot + K3 * Speed + K4 * SpeedDot + TempSpeed;
+  Pwm = K1 * (Angle + AngleBalance) + K2 * AngleDot + K3 * Speed + K4 * Distance + TempSpeed;
   
   if (Pwm > 255)
     Pwm = 255;
@@ -150,6 +219,19 @@ void OutPwm() {
 
   analogWrite(ENB, PwmRight);
   analogWrite(ENA, PwmLeft);
+}
+
+void printout() {
+  double temp = Angle+AngleBalance;
+  Serial.print(temp);
+  Serial.print("    ");
+  Serial.print(AngleDot);
+  Serial.print("    ");
+  Serial.print(Pwm);
+  Serial.print("    ");
+  Serial.print(Speed);
+  Serial.print("    ");
+  Serial.println(Distance);
 }
 
 void KalmanFilter(double angle_m, double gyro_m)
@@ -193,4 +275,23 @@ void RightWheelSpeed() {
   else
     RightSpeed++;
 }
+
+/*******************************************************
+  linlei
+********************************************************/
+
+/*******************************************************
+  linlei
+********************************************************/
+
+
+/*******************************************************
+  suwenyuan
+********************************************************/
+
+/*******************************************************
+  suwenyuan
+********************************************************/
+
+
 
