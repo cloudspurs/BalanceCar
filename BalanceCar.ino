@@ -1,12 +1,23 @@
+/***********************
+loop once 29
+encoder time 14
+***********************/
+
 #include "Wire.h"
 #include "I2Cdev.h"
 #include "MPU6050.h"
 
+#include <SPI.h>
+#include <WiFi.h>
+
 /********************************************
   mengqinggang
-********************************************/
+****************************************/
+
 int Pwm;
 int PwmLeft, PwmRight;
+
+char remote = '/0';
 
 // L298N
 const int ENA = 9;
@@ -27,37 +38,35 @@ double LeftSpeed = 0;
 double RightSpeed= 0;
 double Speed;
 double SpeedLast;
-double Distance;
-const int SpeedControl = 50;
-const int MaxDistance = 5000;
-
-// dead speed
-const int MDS = 0;
-int TempSpeed;
+double Distance = 0;
+int SpeedControl = 0;
+const int MaxDistance = 200;
 
 // delay time
-const int t = 12;
+const int t = 17;
 
 // PID Parameters
-const double K1 = 60; // 60 
-const double K2 = 1.8;    // 3
-const double K3 = 15; 
-const double K4 = 0.015;
+const double K1 = 65.0;    // 65    
+const double K2 = 1.8;     // 1.8
+const double K3 = 20;      // 15
+const double K4 = 0.2;    // 0.75
+const double K5 = 1.0;     //   
 
-MPU6050 AccelGyro;             // 陀螺仪
-double AngleAy, GyroGy;        // 加速度计算的角度（与x轴夹角）和x轴角速度
-int16_t AX, AY, AZ, GX, GY, GZ; // 3个加速度和3个角速度
+MPU6050 AccelGyro;                     // 陀螺仪
+double AngleAy, GyroGy, GyroGz;        // 加速度计算的角度（与x轴夹角）和x轴角速度和y
+int16_t AX, AY, AZ, GX, GY, GZ;        // 3个加速度和3个角速度
 
-const double AngleBalance = -1.3;
+const double AngleBalance = -1.8;
 
 // kalman para
-double Angle, AngleDot;    // 卡尔曼滤波后的角度和角速度
+double Angle, AngleDot;          // 卡尔曼滤波后的角度和角速度
 const double dt = 0.02;          // 卡尔曼滤波采样时间
 double P[2][2] = {{1, 0}, {0, 1}};
 double Pdot[4] = {0, 0, 0, 0};
 double Q_angle = 0.001, Q_gyro = 0.005;  // 角度(AngleAx)置信度，角速度(GyroGx)置信度
 double R_angle = 0.5, C_0 = 1;
 double q_bias, angle_err, PCt_0, PCt_1, E, K_0, K_1, t_0, t_1;
+
 /********************************************************
   mengqinggang
 ********************************************************/
@@ -76,11 +85,17 @@ double q_bias, angle_err, PCt_0, PCt_1, E, K_0, K_1, t_0, t_1;
   suwenyuan
 ********************************************************/
 
+char ssid[] = "cloud";
+char pass[] = "cloudspurs";
+int keyIndex = 0;
+int status = WL_IDLE_STATUS;
+int test = 0;
+
+WiFiServer server(12345);
+
 /*******************************************************
   suwenyuan
 ********************************************************/
-
-
 
 void setup() {
   Wire.begin();
@@ -117,22 +132,28 @@ void setup() {
   suwenyuan
 ********************************************************/
 
+  ConnectToNetwork();
+
 /*******************************************************
   suwenyuan
 ********************************************************/
-
-  
 }
 
 void loop() {
-  //Serial.println(micros()/1000);
-  Protect();
+  Serial.println(micros()/1000);
+ 
   CalAngle();
+  
+  GetChar();
+  Drive(remote);
+  
   CalSpeed();
   CalPwm();
+  
+  Protect();
   OutPwm();
   
-  printout();
+  //printout();
 
 /*******************************************************
   linlei
@@ -146,6 +167,7 @@ void loop() {
 /*******************************************************
   suwenyuan
 ********************************************************/
+
 
 /*******************************************************
   suwenyuan
@@ -154,84 +176,127 @@ void loop() {
   delay(t);
 }
 
-void Drive() {
-  char drive;
+void printout() {
+  double temp = Angle+AngleBalance;
+  Serial.print(temp);
+  Serial.print("    ");
+ 
+  Serial.print(AngleDot);
+  Serial.print("    ");
+ 
+  Serial.print(PwmLeft);
+  Serial.print("    ");
+ 
+  Serial.print(PwmRight);
+  Serial.print("    ");
+ 
+  Serial.print(GyroGz);
+  Serial.print("    ");
+ 
+  Serial.print(Speed);
+  Serial.print("    ");
+ 
+  Serial.println(Distance);
+}
+
+void GetChar() {
+  WiFiClient client = server.available();
+  
+  if (client) {
+     if (client.connected()) {
+       remote = client.read();
+       if (remote) {
+         Serial.println(remote);
+       }
+     }
+  }
+}
+
+void Drive(char drive) {
+  if (drive == 'b')
+    SpeedControl = 0;
+  
   if (drive == 'w') 
-    Distance += SpeedControl;
-  if (drive == 's')
-    Distance -= SpeedControl;
-  if (Distance > MaxDistance)
-    Distance = MaxDistance;
-  if (Distance < -MaxDistance)
-    Distance = -MaxDistance;
+    SpeedControl = 1;
+  
+  if (drive == 's') 
+    SpeedControl = -1;
+  
+  //if (drive == 'a')
+  
+  //if (drive == 'd')
 }
 
 void CalAngle() {
   AccelGyro.getMotion6(&AX, &AY, &AZ, &GX, &GY, &GZ);
   AngleAy = atan2(AX, AZ)*180/PI;
   GyroGy = -GY/131.00;
+  GyroGz = GZ/131.00;
   KalmanFilter(AngleAy, GyroGy);
 }
 
 void CalSpeed() {
-  SpeedLast = (LeftSpeed + RightSpeed) - 0;
+  SpeedLast = (LeftSpeed + RightSpeed);
   Speed *= 0.7;
   Speed += SpeedLast * 0.3;
   Distance += Speed;
+  Distance += SpeedControl;
+  
+  if (Distance > MaxDistance) 
+      Distance = MaxDistance;
+      
+  if (Distance < MaxDistance) 
+      Distance = -MaxDistance;
+  
   LeftSpeed = RightSpeed = 0;
 }
 
 void Protect() {
-  if (abs(Angle) >  10 )
-  Pwm = 0;
+  if (abs(Angle) >  30 )
+    Pwm = 0;
 }
 
 void CalPwm() {
-  if (Angle > 0)
-    TempSpeed = MDS;
-  else
-    TempSpeed = -MDS;
+  Pwm = K1 * (Angle + AngleBalance) + K2 * AngleDot + K3 * Speed + K4 * Distance;
   
-  Pwm = K1 * (Angle + AngleBalance) + K2 * AngleDot + K3 * Speed + K4 * Distance + TempSpeed;
+  PwmLeft = Pwm - K5 * GyroGz;
+  PwmRight = Pwm + K5 * GyroGz;
   
-  if (Pwm > 255)
-    Pwm = 255;
-  if (Pwm < -255)
-    Pwm = -255;
+  if (PwmLeft > 255)
+    PwmLeft = 255;
+  if (PwmLeft < -255)
+    PwmLeft = -255;
+    
+  if (PwmRight > 255)
+    PwmRight = 255;
+  if (PwmRight < -255)
+    PwmRight = -255;
 }
 
 void OutPwm() {
-  if (Pwm > 0) {
+  if (PwmLeft > 0) {
     digitalWrite(IN1, HIGH);
     digitalWrite(IN2, LOW);
+  }
+  else if (PwmLeft < 0) {
+    digitalWrite(IN1, LOW);
+    digitalWrite(IN2, HIGH);
+  }
+  
+  if (PwmRight > 0) {
     digitalWrite(IN3, HIGH);
     digitalWrite(IN4, LOW);
   }
-  else if (Pwm < 0) {
-    digitalWrite(IN1, LOW);
-    digitalWrite(IN2, HIGH);
+  else if (PwmRight < 0) {
     digitalWrite(IN3, LOW);
     digitalWrite(IN4, HIGH);
   }
-  
-  PwmLeft = abs(Pwm);
-  PwmRight = abs(Pwm);
+
+  PwmLeft = abs(PwmLeft);
+  PwmRight = abs(PwmRight);
 
   analogWrite(ENB, PwmRight);
   analogWrite(ENA, PwmLeft);
-}
-
-void printout() {
-  double temp = Angle+AngleBalance;
-  Serial.print(temp);
-  Serial.print("    ");
-  Serial.print(AngleDot);
-  Serial.print("    ");
-  Serial.print(Pwm);
-  Serial.print("    ");
-  Serial.print(Speed);
-  Serial.print("    ");
-  Serial.println(Distance);
 }
 
 void KalmanFilter(double angle_m, double gyro_m)
@@ -289,9 +354,44 @@ void RightWheelSpeed() {
   suwenyuan
 ********************************************************/
 
+void ConnectToNetwork() {
+  if (WiFi.status() == WL_NO_SHIELD) {
+    Serial.println("WiFi shield not present.");
+    while(true);
+  }
+  
+  while (status != WL_CONNECTED) {
+    Serial.print("Attempting to connect to SSID: ");
+    Serial.println(ssid);
+    status = WiFi.begin(ssid, pass);
+    delay(2000);
+  }
+  
+  server.begin();
+  
+  printWiFiStatus();
+  
+  delay(1000);
+}
+
+void printWiFiStatus() {
+  Serial.print("SSID: ");
+  Serial.println(WiFi.SSID());
+  
+  IPAddress ip = WiFi.localIP();
+  
+  Serial.print("IP Address: ");
+  Serial.println(ip);
+  
+  long rssi = WiFi.RSSI();
+  
+  Serial.print("signal strength (RSSI): ");
+  Serial.print(rssi);
+  Serial.println("dBm");
+}
+
 /*******************************************************
   suwenyuan
 ********************************************************/
-
 
 
